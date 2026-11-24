@@ -3,13 +3,57 @@ import express from "express";
 import { createServer as createViteServer } from "vite";
 import path from "path";
 import { fileURLToPath } from "url";
-import crypto from "crypto";
 import dotenv from "dotenv";
+
+// src/utils/tokenSecurity.ts
+import crypto from "crypto";
+var OFFICIAL_OWNER_EMAIL = "kurghinyanartyom2@gmail.com";
+var SERVER_SECRET = process.env.SESSION_SECRET || "hayenglish_secure_owner_hmac_secret_2026_x89f";
+function createSignedSessionToken(userId, email) {
+  const cleanEmail = email.trim().toLowerCase();
+  const isOwner = cleanEmail === OFFICIAL_OWNER_EMAIL.toLowerCase();
+  const role = isOwner ? "super_admin" : "student";
+  const payload = {
+    userId,
+    email: cleanEmail,
+    role,
+    issuedAt: Date.now(),
+    expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1e3
+    // 30 days
+  };
+  const payloadJson = JSON.stringify(payload);
+  const payloadBase64 = Buffer.from(payloadJson).toString("base64url");
+  const signature = crypto.createHmac("sha256", SERVER_SECRET).update(payloadBase64).digest("base64url");
+  return `${payloadBase64}.${signature}`;
+}
+function verifySignedSessionToken(token) {
+  try {
+    if (!token || typeof token !== "string") return null;
+    const parts = token.split(".");
+    if (parts.length !== 2) return null;
+    const [payloadBase64, providedSignature] = parts;
+    const expectedSignature = crypto.createHmac("sha256", SERVER_SECRET).update(payloadBase64).digest("base64url");
+    if (!crypto.timingSafeEqual(Buffer.from(providedSignature), Buffer.from(expectedSignature))) {
+      return null;
+    }
+    const payloadJson = Buffer.from(payloadBase64, "base64url").toString("utf8");
+    const payload = JSON.parse(payloadJson);
+    if (Date.now() > payload.expiresAt) {
+      return null;
+    }
+    if (payload.role === "super_admin" && payload.email.toLowerCase() !== OFFICIAL_OWNER_EMAIL.toLowerCase()) {
+      return null;
+    }
+    return payload;
+  } catch {
+    return null;
+  }
+}
+
+// server.ts
 dotenv.config();
 var __filename = fileURLToPath(import.meta.url);
 var __dirname = path.dirname(__filename);
-var OFFICIAL_OWNER_EMAIL = "kurghinyanartyom2@gmail.com";
-var SERVER_SECRET = process.env.SESSION_SECRET || "hayenglish_secure_owner_hmac_secret_2026_x89f";
 var serverAds = [
   {
     id: "ad_demo_it_english",
@@ -54,46 +98,6 @@ var serverAds = [
     expiresAt: "2026-09-29T11:00:00Z"
   }
 ];
-function createSignedSessionToken(userId, email) {
-  const cleanEmail = email.trim().toLowerCase();
-  const isOwner = cleanEmail === OFFICIAL_OWNER_EMAIL.toLowerCase();
-  const role = isOwner ? "super_admin" : "student";
-  const payload = {
-    userId,
-    email: cleanEmail,
-    role,
-    issuedAt: Date.now(),
-    expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1e3
-    // 30 days
-  };
-  const payloadJson = JSON.stringify(payload);
-  const payloadBase64 = Buffer.from(payloadJson).toString("base64url");
-  const signature = crypto.createHmac("sha256", SERVER_SECRET).update(payloadBase64).digest("base64url");
-  return `${payloadBase64}.${signature}`;
-}
-function verifySignedSessionToken(token) {
-  try {
-    if (!token || typeof token !== "string") return null;
-    const parts = token.split(".");
-    if (parts.length !== 2) return null;
-    const [payloadBase64, providedSignature] = parts;
-    const expectedSignature = crypto.createHmac("sha256", SERVER_SECRET).update(payloadBase64).digest("base64url");
-    if (!crypto.timingSafeEqual(Buffer.from(providedSignature), Buffer.from(expectedSignature))) {
-      return null;
-    }
-    const payloadJson = Buffer.from(payloadBase64, "base64url").toString("utf8");
-    const payload = JSON.parse(payloadJson);
-    if (Date.now() > payload.expiresAt) {
-      return null;
-    }
-    if (payload.role === "super_admin" && payload.email.toLowerCase() !== OFFICIAL_OWNER_EMAIL.toLowerCase()) {
-      return null;
-    }
-    return payload;
-  } catch {
-    return null;
-  }
-}
 var authenticateSession = (req, res, next) => {
   const authHeader = req.headers.authorization || "";
   const token = authHeader.replace(/^Bearer\s+/i, "").trim();
